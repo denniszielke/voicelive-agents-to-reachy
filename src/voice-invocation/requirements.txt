@@ -1,0 +1,10 @@
+# VoiceLive (always required — speech I/O for both backend modes)
+azure-ai-voicelive==1.3.0b1
+azure-identity==1.25.3
+pyaudio==0.2.14
+
+# Custom-backend mode (POSTing to an /invocations endpoint)
+httpx==0.28.1
+
+# Shared
+python-dotenv==1.2.2

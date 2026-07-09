@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reachy — Temperature Agents</title>
+<style>
+  :root { color-scheme: light dark; --accent: #2d7cd6; --green: #1a8a3a; --red: #b53030; --amber: #d6882d; }
+  * { box-sizing: border-box; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 16px; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  .subtitle { font-size: 0.82rem; color: #888; margin: 0 0 14px; }
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  button {
+    padding: 8px 16px; border-radius: 6px; border: 1px solid #8886;
+    background: var(--accent); color: white; font: inherit; cursor: pointer;
+  }
+  button.secondary { background: transparent; color: inherit; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .mic-status { font-size: 0.82rem; color: #888; }
+
+  /* Agents grid — one column per agent */
+  .agents-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+
+  .agent-panel {
+    border: 1px solid #8883; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .agent-header { display: flex; align-items: center; gap: 8px; }
+  .agent-name { font-weight: 700; font-size: 0.95rem; }
+  .pill {
+    display: inline-block; padding: 1px 9px; border-radius: 999px;
+    background: #8883; font-size: 0.75rem;
+  }
+  .pill.connected { background: var(--green); color: white; }
+  .pill.error     { background: var(--red);   color: white; }
+  .pill.connecting{ background: var(--amber); color: white; }
+  .indicator { width: 10px; height: 10px; border-radius: 50%; background: #888; margin-left: auto; }
+  .indicator.speaking  { background: var(--green); animation: pulse 0.8s infinite alternate; }
+  .indicator.listening { background: var(--amber);  animation: pulse 0.6s infinite alternate; }
+  @keyframes pulse { from { opacity: 0.55 } to { opacity: 1 } }
+
+  .convo {
+    flex: 1; min-height: 140px; max-height: 340px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 6px; background: #0001; border-radius: 6px;
+  }
+  .bubble { padding: 7px 11px; border-radius: 10px; max-width: 85%; font-size: 0.88rem; word-break: break-word; }
+  .bubble.user { background: var(--accent); color: white; margin-left: auto; text-align: right; }
+  .bubble.bot  { background: #8882; }
+
+  .event-log {
+    font-family: ui-monospace, monospace; font-size: 0.74rem;
+    height: 80px; overflow-y: auto; background: #0001; padding: 5px;
+    border-radius: 5px; color: #666; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+<h1>🤖 Reachy — Temperature Agents</h1>
+<p class="subtitle">
+  Talks to <strong>weather-agent</strong> (outside) and
+  <strong>homeassistant-agent</strong> (inside) simultaneously via VoiceLive WebRTC.
+</p>
+
+<div class="toolbar">
+  <button id="btnConnect" onclick="connectAll()">Connect all agents</button>
+  <button id="btnDisconnect" class="secondary" onclick="disconnectAll()" disabled>Disconnect all</button>
+  <span class="mic-status" id="micStatus">microphone: not requested</span>
+</div>
+
+<div class="agents-grid" id="agentsGrid">
+  <!-- panels injected by JS after /config fetch -->
+  <p style="color:#888;font-size:0.85rem">Loading agent list from server…</p>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// AgentSession: one WebSocket + one RTCPeerConnection per agent
+// ---------------------------------------------------------------------------
+class AgentSession {
+  constructor(agentName, panel) {
+    this.agentName = agentName;
+    this.panel = panel;
+    this.signalWs = null;
+    this.pc = null;
+    this.dataChannel = null;
+    this.audioEl = null;
+    this._botText = '';
+    this._botBubble = null;
+    this._userText = '';
+    this._userBubble = null;
+    this._active = false;
+  }
+
+  // ----- DOM helpers -------------------------------------------------------
+  get _convo()    { return this.panel.querySelector('.convo'); }
+  get _log()      { return this.panel.querySelector('.event-log'); }
+  get _pill()     { return this.panel.querySelector('.pill'); }
+  get _indicator(){ return this.panel.querySelector('.indicator'); }
+
+  _setPill(text, cls) {
+    const p = this._pill;
+    p.textContent = text;
+    p.className = 'pill' + (cls ? ` ${cls}` : '');
+  }
+  _setIndicator(state) {
+    this._indicator.className = 'indicator' + (state ? ` ${state}` : '');
+  }
+  _addLog(msg) {
+    const el = this._log;
+    el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+    el.scrollTop = el.scrollHeight;
+  }
+  _bubble(text, role) {
+    const div = document.createElement('div');
+    div.className = `bubble ${role}`;
+    div.textContent = text;
+    this._convo.appendChild(div);
+    div.scrollIntoView({ behavior: 'smooth' });
+    return div;
+  }
+
+  // ----- main connect -------------------------------------------------------
+  async connect(sharedTrack) {
+    this._active = true;
+    this._setPill('connecting…', 'connecting');
+    this._addLog('Connecting…');
+
+    const wsUrl = `ws://${location.hostname || 'localhost'}:${location.port || 8090}/ws?agent=${encodeURIComponent(this.agentName)}`;
+    this.signalWs = new WebSocket(wsUrl);
+    await new Promise((res, rej) => {
+      this.signalWs.onopen = res;
+      this.signalWs.onerror = () => rej(new Error('WebSocket failed'));
+    });
+    this._addLog('Signaling WS open');
+
+    this.pc = new RTCPeerConnection();
+
+    // Data channel for non-audio events
+    this.dataChannel = this.pc.createDataChannel('voice-live-events');
+    this.dataChannel.onmessage = e => this._onData(JSON.parse(e.data));
+    this.dataChannel.onopen  = () => this._addLog('Data channel open');
+    this.dataChannel.onclose = () => this._addLog('Data channel closed');
+
+    // Add shared mic track
+    this.pc.addTrack(sharedTrack);
+
+    // Remote audio playback
+    this.audioEl = document.createElement('audio');
+    this.audioEl.autoplay = true;
+    document.body.appendChild(this.audioEl);
+    this.pc.ontrack = e => { this.audioEl.srcObject = e.streams[0]; };
+
+    // SDP offer
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer);
+    await new Promise(res => {
+      if (this.pc.iceGatheringState === 'complete') return res();
+      this.pc.addEventListener('icegatheringstatechange', () => {
+        if (this.pc.iceGatheringState === 'complete') res();
+      });
+    });
+    this._addLog('ICE gathering complete');
+
+    this.signalWs.send(JSON.stringify({
+      type: 'rtc.call.sdp.create',
+      sdp_offer: this.pc.localDescription.sdp,
+    }));
+    this._addLog('SDP offer sent');
+
+    this.signalWs.onmessage = e => this._onSignal(JSON.parse(e.data));
+    this.signalWs.onclose = () => this._addLog('Signaling WS closed');
+    this.signalWs.onerror = () => { this._setPill('error', 'error'); };
+  }
+
+  // ----- signaling messages (control channel) -------------------------------
+  _onSignal(msg) {
+    const t = msg.type || '';
+    this._addLog(`ctrl: ${t}`);
+    if (t === 'rtc.call.sdp.created' && msg.sdp_answer) {
+      this.pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp_answer })
+        .then(() => {
+          this._setPill('connected', 'connected');
+          this._addLog('RTC connected — audio flowing');
+        })
+        .catch(err => { this._setPill('error', 'error'); this._addLog(`SDP error: ${err}`); });
+    } else if (t === 'error') {
+      this._setPill('error', 'error');
+      this._addLog(`Error: ${msg.message || JSON.stringify(msg)}`);
+    }
+  }
+
+  // ----- data channel events (transcripts, responses) ----------------------
+  _onData(msg) {
+    const t = msg.type || '';
+    switch (t) {
+      case 'input_audio_buffer.speech_started':
+        this._setIndicator('listening');
+        this._userText = ''; this._userBubble = null;
+        break;
+      case 'input_audio_buffer.speech_stopped':
+        this._setIndicator('');
+        break;
+      case 'conversation.item.input_audio_transcription.delta':
+        this._userText += (msg.delta || '');
+        if (!this._userBubble) this._userBubble = this._bubble(this._userText, 'user');
+        else this._userBubble.textContent = this._userText;
+        break;
+      case 'conversation.item.input_audio_transcription.completed':
+        if (msg.transcript) {
+          if (this._userBubble) this._userBubble.textContent = msg.transcript;
+          else this._bubble(msg.transcript, 'user');
+        }
+        this._userText = ''; this._userBubble = null;
+        break;
+      case 'response.created':
+        this._setIndicator('speaking');
+        this._botText = ''; this._botBubble = null;
+        break;
+      case 'response.audio_transcript.delta':
+      case 'response.text.delta':
+        this._botText += (msg.delta || '');
+        if (!this._botBubble) this._botBubble = this._bubble(this._botText, 'bot');
+        else this._botBubble.textContent = this._botText;
+        break;
+      case 'response.audio_transcript.done':
+      case 'response.text.done': {
+        const final = msg.transcript || msg.text || this._botText;
+        if (this._botBubble && final) this._botBubble.textContent = final;
+        this._botText = ''; this._botBubble = null;
+        break;
+      }
+      case 'response.done':
+        this._setIndicator('');
+        break;
+      default:
+        this._addLog(`data: ${t}`);
+    }
+  }
+
+  // ----- disconnect --------------------------------------------------------
+  disconnect() {
+    this._active = false;
+    this._setPill('disconnected');
+    this._setIndicator('');
+    if (this.dataChannel) { try { this.dataChannel.close(); } catch(_){} this.dataChannel = null; }
+    if (this.pc)          { try { this.pc.close(); }          catch(_){} this.pc = null; }
+    if (this.signalWs && this.signalWs.readyState === WebSocket.OPEN) {
+      try { this.signalWs.close(); } catch(_){}
+    }
+    this.signalWs = null;
+    if (this.audioEl) { this.audioEl.srcObject = null; this.audioEl.remove(); this.audioEl = null; }
+    this._addLog('Disconnected.');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Page-level state
+// ---------------------------------------------------------------------------
+let sessions = [];
+let sharedStream = null;
+
+function _buildPanel(agentName) {
+  const section = document.createElement('div');
+  section.className = 'agent-panel';
+  section.innerHTML = `
+    <div class="agent-header">
+      <span class="agent-name">${agentName}</span>
+      <span class="pill">disconnected</span>
+      <span class="indicator"></span>
+    </div>
+    <div class="convo"></div>
+    <div class="event-log"></div>`;
+  return section;
+}
+
+async function _loadAgents() {
+  let agents;
+  try {
+    const res = await fetch('/config');
+    agents = (await res.json()).agents || [];
+  } catch(_) {
+    agents = ['weather-agent', 'homeassistant-agent'];
+  }
+  const grid = document.getElementById('agentsGrid');
+  grid.innerHTML = '';
+  sessions = [];
+  for (const name of agents) {
+    const panel = _buildPanel(name);
+    grid.appendChild(panel);
+    sessions.push(new AgentSession(name, panel));
+  }
+}
+
+async function connectAll() {
+  document.getElementById('btnConnect').disabled = true;
+  document.getElementById('btnDisconnect').disabled = false;
+
+  // Request microphone once, share the track across all sessions
+  const micEl = document.getElementById('micStatus');
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error(
+      'getUserMedia unavailable — open via http://localhost or https://'
+    );
+    sharedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micEl.textContent = 'microphone: active';
+  } catch(err) {
+    micEl.textContent = `microphone error: ${err.message}`;
+    document.getElementById('btnConnect').disabled = false;
+    document.getElementById('btnDisconnect').disabled = true;
+    return;
+  }
+  const track = sharedStream.getTracks()[0];
+
+  // Connect all sessions in parallel
+  await Promise.allSettled(sessions.map(s => s.connect(track).catch(err => {
+    s._setPill('error', 'error');
+    s._addLog(`Connect failed: ${err.message}`);
+  })));
+}
+
+function disconnectAll() {
+  sessions.forEach(s => s.disconnect());
+  if (sharedStream) { sharedStream.getTracks().forEach(t => t.stop()); sharedStream = null; }
+  document.getElementById('micStatus').textContent = 'microphone: not requested';
+  document.getElementById('btnConnect').disabled = false;
+  document.getElementById('btnDisconnect').disabled = true;
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+_loadAgents();
+</script>
+</body>
+</html>

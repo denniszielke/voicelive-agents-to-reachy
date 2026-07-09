@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reachy — Temperature Agents</title>
+<style>
+  :root { color-scheme: light dark; --accent: #2d7cd6; --green: #1a8a3a; --red: #b53030; --amber: #d6882d; }
+  * { box-sizing: border-box; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 16px; max-width: 720px; margin-inline: auto; }
+  h1 { font-size: 1.25rem; margin: 0 0 4px; }
+  .subtitle { font-size: 0.82rem; color: #888; margin: 0 0 16px; }
+
+  /* Agent selector */
+  .agent-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .agent-tab {
+    padding: 6px 14px; border-radius: 999px; border: 1px solid #8886;
+    background: transparent; font: inherit; cursor: pointer; font-size: 0.875rem;
+  }
+  .agent-tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .agent-tab:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Toolbar */
+  .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  button.primary {
+    padding: 8px 18px; border-radius: 6px; border: 1px solid #8886;
+    background: var(--accent); color: white; font: inherit; cursor: pointer;
+  }
+  button.secondary { padding: 8px 18px; border-radius: 6px; border: 1px solid #8886; background: transparent; font: inherit; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Status */
+  .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 0.85rem; }
+  .pill {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    background: #8883; font-size: 0.78rem;
+  }
+  .pill.connected  { background: var(--green); color: white; }
+  .pill.error      { background: var(--red);   color: white; }
+  .pill.connecting { background: var(--amber); color: white; }
+  .indicator { width: 11px; height: 11px; border-radius: 50%; background: #8885; flex-shrink: 0; }
+  .indicator.speaking  { background: var(--green); animation: pulse 0.8s infinite alternate; }
+  .indicator.listening { background: var(--amber); animation: pulse 0.6s infinite alternate; }
+  @keyframes pulse { from { opacity: 0.55 } to { opacity: 1 } }
+
+  /* Conversation */
+  #convo {
+    min-height: 180px; max-height: 420px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 10px; background: #0001; border-radius: 8px; margin-bottom: 10px;
+  }
+  .bubble { padding: 8px 12px; border-radius: 12px; max-width: 80%; font-size: 0.9rem; word-break: break-word; }
+  .bubble.user { background: var(--accent); color: white; margin-left: auto; text-align: right; }
+  .bubble.bot  { background: #8882; }
+
+  /* Event log */
+  details summary { font-size: 0.78rem; color: #888; cursor: pointer; margin-bottom: 4px; }
+  #log {
+    font-family: ui-monospace, monospace; font-size: 0.74rem;
+    height: 100px; overflow-y: auto; background: #0001; padding: 6px;
+    border-radius: 6px; color: #666; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+<h1>🤖 Reachy — Temperature Agents</h1>
+<p class="subtitle">Voice Live WebRTC — ask about the outside or inside temperature.</p>
+
+<!-- Agent selector (populated from /config) -->
+<div class="agent-tabs" id="agentTabs"></div>
+
+<div class="toolbar">
+  <button class="primary" id="btnConnect" onclick="startSession()">Connect</button>
+  <button class="secondary" id="btnDisconnect" onclick="endSession()" disabled>Disconnect</button>
+</div>
+
+<div class="status-row">
+  <span class="pill" id="pill">disconnected</span>
+  <span class="indicator" id="indicator"></span>
+  <span id="statusText" style="color:#888"></span>
+</div>
+
+<div id="convo"></div>
+
+<details>
+  <summary>Event log</summary>
+  <div id="log"></div>
+</details>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let signalWs  = null;
+let pc        = null;
+let dataChannel = null;
+let audioEl   = null;
+let localStream = null;
+
+let _botText   = '';
+let _botBubble = null;
+let _userText  = '';
+let _userBubble = null;
+
+let availableAgents = [];
+let selectedAgent   = '';
+
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+const $    = id => document.getElementById(id);
+const log  = msg => { const e=$('log'); e.textContent+=`[${new Date().toLocaleTimeString()}] ${msg}\n`; e.scrollTop=e.scrollHeight; };
+const pill = (text, cls) => { const p=$('pill'); p.textContent=text; p.className='pill'+(cls?` ${cls}`:''); };
+const ind  = state => { $('indicator').className='indicator'+(state?` ${state}`:''); };
+
+function addBubble(text, role) {
+  const div = document.createElement('div');
+  div.className = `bubble ${role}`;
+  div.textContent = text;
+  $('convo').appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth' });
+  return div;
+}
+
+// ---------------------------------------------------------------------------
+// Agent selector
+// ---------------------------------------------------------------------------
+async function loadAgents() {
+  try {
+    const res = await fetch('/config');
+    availableAgents = (await res.json()).agents || [];
+  } catch(_) {
+    availableAgents = ['orchestrator-agent'];
+  }
+  const tabs = $('agentTabs');
+  tabs.innerHTML = '';
+  availableAgents.forEach((name, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'agent-tab' + (i === 0 ? ' active' : '');
+    btn.textContent = name;
+    btn.dataset.agent = name;
+    btn.onclick = () => selectAgent(name);
+    tabs.appendChild(btn);
+  });
+  selectedAgent = availableAgents[0] || '';
+  $('statusText').textContent = selectedAgent ? `agent: ${selectedAgent}` : '';
+}
+
+function selectAgent(name) {
+  if (signalWs) return; // can't switch while connected
+  selectedAgent = name;
+  document.querySelectorAll('.agent-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.agent === name);
+  });
+  $('statusText').textContent = `agent: ${name}`;
+}
+
+// ---------------------------------------------------------------------------
+// Session lifecycle
+// ---------------------------------------------------------------------------
+async function startSession() {
+  if (!selectedAgent) { log('No agent selected'); return; }
+  $('btnConnect').disabled = true;
+  $('btnDisconnect').disabled = false;
+  document.querySelectorAll('.agent-tab').forEach(b => b.disabled = true);
+  pill('connecting…', 'connecting');
+  log(`Connecting to ${selectedAgent}…`);
+
+  try {
+    // 1. Microphone
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error(
+      'getUserMedia unavailable — open via http://localhost or https://'
+    );
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    log('Microphone access granted');
+
+    // 2. Signaling WebSocket
+    const wsUrl = `ws://${location.hostname || 'localhost'}:${location.port || 8090}/ws?agent=${encodeURIComponent(selectedAgent)}`;
+    signalWs = new WebSocket(wsUrl);
+    await new Promise((res, rej) => {
+      signalWs.onopen = res;
+      signalWs.onerror = () => rej(new Error('Signaling WebSocket failed'));
+    });
+    log('Signaling WebSocket open');
+
+    // 3. Peer connection + data channel
+    pc = new RTCPeerConnection();
+    dataChannel = pc.createDataChannel('voice-live-events');
+    dataChannel.onopen    = () => log('Data channel open');
+    dataChannel.onclose   = () => log('Data channel closed');
+    dataChannel.onmessage = e => handleDataEvent(JSON.parse(e.data));
+
+    // 4. Mic track
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+    // 5. Remote audio
+    audioEl = document.createElement('audio');
+    audioEl.autoplay = true;
+    document.body.appendChild(audioEl);
+    pc.ontrack = e => { audioEl.srcObject = e.streams[0]; };
+
+    // 6. SDP offer → wait for ICE
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await new Promise(res => {
+      if (pc.iceGatheringState === 'complete') return res();
+      pc.addEventListener('icegatheringstatechange', () => {
+        if (pc.iceGatheringState === 'complete') res();
+      });
+    });
+    log('ICE gathering complete');
+
+    // 7. Send offer through signaling channel
+    signalWs.send(JSON.stringify({ type: 'rtc.call.sdp.create', sdp_offer: pc.localDescription.sdp }));
+    log('SDP offer sent');
+
+    // 8. Wire up signaling handler
+    signalWs.onmessage = e => handleSignalingMessage(JSON.parse(e.data));
+    signalWs.onclose   = () => log('Signaling WebSocket closed');
+    signalWs.onerror   = () => { pill('error', 'error'); log('Signaling WebSocket error'); };
+
+  } catch(err) {
+    log(`Error: ${err.message}`);
+    pill('error', 'error');
+    cleanup();
+    $('btnConnect').disabled = false;
+    $('btnDisconnect').disabled = true;
+    document.querySelectorAll('.agent-tab').forEach(b => b.disabled = false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Signaling messages (control channel — SDP answer etc.)
+// ---------------------------------------------------------------------------
+function handleSignalingMessage(msg) {
+  const t = msg.type || '';
+  log(`ctrl: ${t}`);
+  if (t === 'rtc.call.sdp.created' && msg.sdp_answer) {
+    pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp_answer })
+      .then(() => { pill('connected', 'connected'); log('RTC connected — audio flowing'); })
+      .catch(err => { pill('error', 'error'); log(`SDP error: ${err}`); });
+  } else if (t === 'error') {
+    pill('error', 'error');
+    log(`Service error: ${msg.message || JSON.stringify(msg)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Data channel events (transcripts, audio events)
+// ---------------------------------------------------------------------------
+function handleDataEvent(msg) {
+  const t = msg.type || '';
+  switch (t) {
+    case 'input_audio_buffer.speech_started':
+      ind('listening');
+      _userText = ''; _userBubble = null;
+      break;
+    case 'input_audio_buffer.speech_stopped':
+      ind('');
+      break;
+    case 'conversation.item.input_audio_transcription.delta':
+      _userText += (msg.delta || '');
+      if (!_userBubble) _userBubble = addBubble(_userText, 'user');
+      else _userBubble.textContent = _userText;
+      break;
+    case 'conversation.item.input_audio_transcription.completed':
+      if (msg.transcript) {
+        if (_userBubble) _userBubble.textContent = msg.transcript;
+        else addBubble(msg.transcript, 'user');
+      }
+      _userText = ''; _userBubble = null;
+      break;
+    case 'response.created':
+      ind('speaking');
+      _botText = ''; _botBubble = null;
+      break;
+    case 'response.audio_transcript.delta':
+    case 'response.text.delta':
+      _botText += (msg.delta || '');
+      if (!_botBubble) _botBubble = addBubble(_botText, 'bot');
+      else _botBubble.textContent = _botText;
+      break;
+    case 'response.audio_transcript.done':
+    case 'response.text.done': {
+      const final = msg.transcript || msg.text || _botText;
+      if (_botBubble && final) _botBubble.textContent = final;
+      _botText = ''; _botBubble = null;
+      break;
+    }
+    case 'response.done':
+      ind('');
+      break;
+    default:
+      log(`data: ${t}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Disconnect / cleanup
+// ---------------------------------------------------------------------------
+function endSession() {
+  cleanup();
+  pill('disconnected');
+  ind('');
+  $('btnConnect').disabled = false;
+  $('btnDisconnect').disabled = true;
+  document.querySelectorAll('.agent-tab').forEach(b => b.disabled = false);
+  log('Disconnected.');
+}
+
+function cleanup() {
+  if (dataChannel) { try { dataChannel.close(); } catch(_){} dataChannel = null; }
+  if (pc)          { try { pc.close(); }          catch(_){} pc = null; }
+  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  if (signalWs && signalWs.readyState === WebSocket.OPEN) { try { signalWs.close(); } catch(_){} }
+  signalWs = null;
+  if (audioEl) { audioEl.srcObject = null; audioEl.remove(); audioEl = null; }
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+loadAgents();
+</script>
+</body>
+</html>

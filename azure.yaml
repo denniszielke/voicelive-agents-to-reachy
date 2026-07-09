@@ -1,0 +1,17 @@
+name: voicelive-agents-to-reachy
+metadata:
+  template: voicelive-agents-to-reachy@0.0.1
+infra:
+  provider: bicep
+  path: ./infra
+hooks:
+  postdeploy:
+    - shell: sh
+      run: cp .azure/$AZURE_ENV_NAME/.env ./
+    # After `azd up`, build + register the two hosted agents (weather-agent,
+    # homeassistant-agent) in Foundry. Uncomment to run automatically, or run
+    # manually: `python -m scripts.deploy_agents`.
+    # - shell: sh
+    #   run: python -m pip install -q -r requirements.txt
+    # - shell: sh
+    #   run: python -m scripts.deploy_agents

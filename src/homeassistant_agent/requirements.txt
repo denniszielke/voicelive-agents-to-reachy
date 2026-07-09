@@ -1,0 +1,11 @@
+# Home Assistant Agent — inside temperature (Agent Framework, Foundry hosted).
+# Only the packages imported by agent.py.
+
+agent-framework-core==1.10.0
+agent-framework-foundry==1.10.0
+
+# Agent server host (invocations_ws WebSocket protocol)
+azure-ai-agentserver-invocations==1.0.0b6
+
+azure-identity==1.25.3
+python-dotenv==1.2.2
