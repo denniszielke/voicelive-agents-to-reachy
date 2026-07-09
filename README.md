@@ -10,6 +10,8 @@ both specialist agents:
 
 Three front-ends consume VoiceLive locally: `chat_client` (browser proxy),
 `webrtclive` (browser + WebRTC), and `voice-invocation` (terminal mic/speaker).
+A fourth, `reachy_conversation`, runs the Reachy Mini robot conversation app
+against the orchestrator through VoiceLive (camera/image recognition removed).
 
 ---
 
@@ -210,6 +212,24 @@ python src/voice-invocation/client.py \
   --invocation-url http://localhost:8088/invocations
 ```
 
+### 4d. reachy_conversation — Reachy Mini robot
+
+Runs the [Reachy Mini conversation app](src/reachy_conversation/README.md)
+against the orchestrator through VoiceLive. This is a port of
+`pollen-robotics/reachy_mini_conversation_app` with camera/image recognition
+removed and the Hugging Face realtime WebSocket replaced by a VoiceLive handler
+bound to the hosted agent. Requires the Reachy Mini robot SDK.
+
+```bash
+pip install -r src/reachy_conversation/requirements.txt
+PYTHONPATH=src/reachy_conversation python -m reachy_mini_conversation_app.main --ui
+```
+
+Uses `AZURE_VOICELIVE_ENDPOINT`, `AZURE_AI_HOSTED_AGENT_NAME`,
+`AZURE_AI_PROJECT_NAME`, `AZURE_VOICELIVE_MODEL`. See
+[src/reachy_conversation/README.md](src/reachy_conversation/README.md) for
+details.
+
 ---
 
 ## 5. Switching which agent answers
@@ -225,3 +245,13 @@ cp .azure/voicelive/.env ./.env
 ```
 
 Or override per run with the CLI flags shown above.
+
+---
+
+## License
+
+This project is licensed under the **Apache License 2.0** — see [`LICENSE`](LICENSE)
+and [`NOTICE`](NOTICE). The `src/reachy_conversation/` directory is a derivative
+of [`pollen-robotics/reachy_mini_conversation_app`](https://github.com/pollen-robotics/reachy_mini_conversation_app)
+(also Apache-2.0). Portions of `src/voice-invocation/client.py` derive from
+Azure SDK samples (© Microsoft Corporation, MIT).

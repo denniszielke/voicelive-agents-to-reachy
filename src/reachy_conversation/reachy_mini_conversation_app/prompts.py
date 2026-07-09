@@ -1,0 +1,114 @@
+import logging
+from pathlib import Path
+
+from reachy_mini_conversation_app.config import DEFAULT_PROFILES_DIRECTORY, config, get_default_voice
+from reachy_mini_conversation_app.memory import format_memory_for_prompt
+
+
+logger = logging.getLogger(__name__)
+
+
+INSTRUCTIONS_FILENAME = "instructions.txt"
+VOICE_FILENAME = "voice.txt"
+GREETING_FILENAME = "greeting.txt"
+DEFAULT_PROFILE_NAME = "default"
+
+DEFAULT_GREETING_PROMPT = (
+    "Start the conversation now with a brief, spontaneous greeting in character. "
+    "Keep it to one sentence, invite the user in naturally, and vary the wording each time."
+)
+
+
+def _default_instructions_file() -> Path:
+    return DEFAULT_PROFILES_DIRECTORY / DEFAULT_PROFILE_NAME / INSTRUCTIONS_FILENAME
+
+
+def _read_instructions_file(instructions_file: Path, profile_name: str) -> str | None:
+    try:
+        if not instructions_file.exists():
+            logger.warning("Profile '%s' has no %s", profile_name, INSTRUCTIONS_FILENAME)
+            return None
+        instructions = instructions_file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError) as e:
+        logger.warning("Failed to load instructions from profile '%s': %s", profile_name, e)
+        return None
+
+    if not instructions:
+        logger.warning("Profile '%s' has empty %s", profile_name, INSTRUCTIONS_FILENAME)
+        return None
+    return instructions
+
+
+def get_session_instructions(instance_path: str | Path | None = None) -> str:
+    """Get session instructions, loading from REACHY_MINI_CUSTOM_PROFILE if set."""
+    profile = config.REACHY_MINI_CUSTOM_PROFILE
+    profile_name = profile or DEFAULT_PROFILE_NAME
+    if not profile:
+        instructions_file = _default_instructions_file()
+        logger.info("Loading default prompt from %s", instructions_file)
+    else:
+        if config.PROFILES_DIRECTORY != DEFAULT_PROFILES_DIRECTORY:
+            logger.info(
+                "Loading prompt from external profile '%s' (root=%s)",
+                profile,
+                config.PROFILES_DIRECTORY,
+            )
+        else:
+            logger.info("Loading prompt from profile '%s'", profile)
+        instructions_file = config.resolve_profile_dir(profile) / INSTRUCTIONS_FILENAME
+
+    instructions = _read_instructions_file(instructions_file, profile_name)
+    if instructions is None and profile and profile != DEFAULT_PROFILE_NAME:
+        default_instructions_file = _default_instructions_file()
+        logger.warning(
+            "Using default profile instructions from %s because profile '%s' is incomplete",
+            default_instructions_file,
+            profile,
+        )
+        instructions = _read_instructions_file(default_instructions_file, DEFAULT_PROFILE_NAME)
+
+    if instructions is None:
+        raise RuntimeError(f"Default profile has no usable {INSTRUCTIONS_FILENAME}")
+
+    memory_prompt = format_memory_for_prompt(instance_path)
+    if memory_prompt:
+        return f"{memory_prompt}\n\n{instructions}"
+    return instructions
+
+
+def get_session_voice(default: str | None = None) -> str:
+    """Resolve the voice to use for the session.
+
+    If a custom profile is selected and contains a voice.txt, return its
+    trimmed content; otherwise return the provided default or the active
+    backend default voice.
+    """
+    fallback = get_default_voice() if default is None else default
+    profile = config.REACHY_MINI_CUSTOM_PROFILE
+    if not profile:
+        return fallback
+    try:
+        voice_file = config.resolve_profile_dir(profile) / VOICE_FILENAME
+        if voice_file.exists():
+            voice = voice_file.read_text(encoding="utf-8").strip()
+            return voice or fallback
+    except Exception:
+        pass
+    return fallback
+
+
+def get_session_greeting_prompt() -> str:
+    """Resolve the startup greeting prompt for the selected profile."""
+    profile = config.REACHY_MINI_CUSTOM_PROFILE
+    if not profile:
+        return DEFAULT_GREETING_PROMPT
+
+    try:
+        greeting_file = config.resolve_profile_dir(profile) / GREETING_FILENAME
+        if greeting_file.exists():
+            greeting = greeting_file.read_text(encoding="utf-8").strip()
+            if greeting:
+                return greeting
+    except Exception as e:
+        logger.warning("Failed to load greeting prompt from profile %r: %s", profile, e)
+    return DEFAULT_GREETING_PROMPT
