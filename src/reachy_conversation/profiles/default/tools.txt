@@ -1,0 +1,10 @@
+dance
+stop_dance
+play_emotion
+stop_emotion
+idle_do_nothing
+move_head
+go_to_sleep
+sweep_look
+remember
+forget

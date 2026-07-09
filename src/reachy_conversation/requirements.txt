@@ -1,0 +1,32 @@
+# Requirements for the Reachy Mini conversation app (VoiceLive port).
+#
+# This is a port of pollen-robotics/reachy_mini_conversation_app with the
+# camera / image-recognition removed and the Hugging Face realtime WebSocket
+# backend replaced by Azure VoiceLive bound to a Foundry hosted agent (the
+# orchestrator). Install with:
+#
+#     pip install -r src/reachy_conversation/requirements.txt
+#
+# The robot SDK packages (reachy-mini, reachy_mini_dances_library,
+# reachy_mini_toolbox) are only installable on a configured Reachy Mini; they
+# are required to actually drive the robot but not to import the VoiceLive
+# handler.
+
+# --- Azure VoiceLive backend (replaces the Hugging Face realtime WS) --------
+azure-ai-voicelive[aiohttp]==1.3.0b1
+azure-identity==1.25.3
+
+# --- App runtime ------------------------------------------------------------
+numpy
+httpx>=0.28.1
+python-dotenv
+mcp>=1.27.1
+
+# --- Media -----------------------------------------------------------------
+av>=17
+huggingface-hub>=1.17.0
+
+# --- Reachy Mini robot SDK (install on the robot) --------------------------
+reachy-mini>=1.8.4
+reachy_mini_dances_library
+reachy_mini_toolbox
