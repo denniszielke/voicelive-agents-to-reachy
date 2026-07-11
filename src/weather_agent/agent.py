@@ -81,7 +81,7 @@ llm = ChatOpenAI(
 # ---------------------------------------------------------------------------
 
 # Default returned when the weather API has never been reached successfully.
-DEFAULT_OUTSIDE_TEMPERATURE_C = 15.0
+DEFAULT_OUTSIDE_TEMPERATURE_C = 29.0
 
 _cache: dict[str, object] = {
     "temperature_c": DEFAULT_OUTSIDE_TEMPERATURE_C,

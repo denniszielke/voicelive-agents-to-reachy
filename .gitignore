@@ -147,12 +147,17 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Reachy conversation app runtime-generated state
+src/reachy_conversation/reachy_mini_conversation_app/startup_settings.json
+
 # Environments
 .env
 .envrc
 .venv
+.rvenv
 env/
 venv/
+rvenv/
 ENV/
 env.bak/
 venv.bak/

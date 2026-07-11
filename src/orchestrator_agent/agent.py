@@ -179,5 +179,31 @@ agent = _chat_client.as_agent(
 )
 
 
+def _run_devui() -> None:
+    """Serve the orchestrator agent in the Agent Framework DevUI.
+
+    Opens a local web interface to interactively test the agent and inspect
+    OpenTelemetry traces of tool calls to the sub-agents. Not for production —
+    see https://learn.microsoft.com/en-us/agent-framework/devui/.
+    """
+    from agent_framework.devui import serve
+
+    host = os.getenv("DEVUI_HOST", "127.0.0.1")
+    port = int(os.getenv("DEVUI_PORT", "8080"))
+    serve(
+        entities=[agent],
+        host=host,
+        port=port,
+        auto_open=True,
+        instrumentation_enabled=True,
+        auth_enabled=False,
+    )
+
+
 if __name__ == "__main__":
-    ResponsesHostServer(agent).run()
+    # Set DEVUI=1 to observe the orchestrator locally in the Agent Framework
+    # DevUI instead of hosting it via the Foundry Responses protocol.
+    if os.getenv("DEVUI", "").strip().lower() in {"1", "true", "yes"}:
+        _run_devui()
+    else:
+        ResponsesHostServer(agent).run()

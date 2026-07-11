@@ -53,12 +53,14 @@ from azure.ai.voicelive.models import (
     AzureSemanticVad,
     AzureStandardVoice,
     InputAudioFormat,
+    InputTextContentPart,
     Modality,
     OutputAudioFormat,
     OutputTextContentPart,
     RequestSession,
     ResponseCreateParams,
     ServerEventType,
+    UserMessageItem,
 )
 
 from reachy_mini_conversation_app.config import (
@@ -68,7 +70,6 @@ from reachy_mini_conversation_app.config import (
 )
 from reachy_mini_conversation_app.prompts import (
     get_session_greeting_prompt,
-    get_session_instructions,
     get_session_voice,
 )
 from reachy_mini_conversation_app.streaming import AdditionalOutputs, audio_to_int16
@@ -246,7 +247,6 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
             )
 
             try:
-                instructions = get_session_instructions(self.instance_path)
                 voice = self.get_current_voice()
             except Exception as e:  # noqa: BLE001
                 logger.error("Failed to resolve personality content: %s", e)
@@ -257,9 +257,10 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
 
             if self.connection is not None:
                 try:
+                    # Instructions are read-only in hosted-agent mode, so only
+                    # the voice can be pushed to the live session.
                     await self.connection.session.update(
                         session=RequestSession(
-                            instructions=instructions,
                             voice=AzureStandardVoice(name=voice),
                         ),
                     )
@@ -359,10 +360,12 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
     def _build_session_config(self) -> RequestSession:
         """Return the VoiceLive session configuration for hosted-agent mode."""
         language = getattr(config, "REALTIME_TRANSCRIPTION_LANGUAGE", None) or "en-US"
+        # In hosted-agent mode the agent owns its instructions; they are
+        # read-only on the VoiceLive session, so `instructions` must not be
+        # sent here or the session.update is rejected.
         return RequestSession(
             modalities=[Modality.TEXT, Modality.AUDIO],
             voice=AzureStandardVoice(name=self.get_current_voice()),
-            instructions=get_session_instructions(self.instance_path),
             input_audio_format=InputAudioFormat.PCM16,
             output_audio_format=OutputAudioFormat.PCM16,
             # Azure Semantic VAD supports the built-in azure-speech transcription
@@ -471,10 +474,12 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
             logger.error("VoiceLive error: %s", message)
             await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": f"[error] {message}"}))
 
-    async def _queue_output_audio(self, delta: Optional[str]) -> None:
+    async def _queue_output_audio(self, delta: Optional[bytes | str]) -> None:
         if not delta:
             return
-        pcm_bytes = base64.b64decode(delta)
+        # The SDK deserializes the ``delta`` field (typed ``bytes``) into raw
+        # PCM16 bytes already; only decode when a base64 string slips through.
+        pcm_bytes = delta if isinstance(delta, (bytes, bytearray)) else base64.b64decode(delta)
         if not pcm_bytes:
             return
         pcm = np.frombuffer(pcm_bytes, dtype=np.int16)
@@ -497,11 +502,9 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
 
         try:
             await self.connection.conversation.item.create(
-                item={
-                    "type": "message",
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": greeting_prompt}],
-                },
+                item=UserMessageItem(
+                    content=[InputTextContentPart(text=greeting_prompt)],
+                ),
             )
             self._mark_activity("startup_greeting_prompt")
             await self._safe_response_create()
