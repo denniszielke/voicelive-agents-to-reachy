@@ -54,7 +54,7 @@ _MODEL_DEPLOYMENT = (
 # ---------------------------------------------------------------------------
 
 # Default returned when Home Assistant has never been reached successfully.
-DEFAULT_INSIDE_TEMPERATURE_C = 21.0
+DEFAULT_INSIDE_TEMPERATURE_C = 24.5
 
 _cache: dict[str, object] = {
     "temperature_c": DEFAULT_INSIDE_TEMPERATURE_C,
