@@ -5,6 +5,7 @@ served via the Reachy Mini Apps settings server so users can configure it.
 """
 
 import os
+import json
 import time
 import asyncio
 import logging
@@ -108,12 +109,27 @@ class ConversationEventBus:
         return queue, unsubscribe
 
     def publish(self, event: str) -> None:
-        """Broadcast to all subscribers via call_soon_threadsafe. Drops events for full or closed queues."""
+        """Broadcast an activity reason to all subscribers as an SSE ``activity`` frame."""
+        self._broadcast(f"event: activity\ndata: {event}\n\n")
+
+    def publish_message(self, payload: dict) -> None:
+        """Broadcast a structured conversation event as an SSE ``message`` frame."""
+        try:
+            data = json.dumps(payload, ensure_ascii=False)
+        except (TypeError, ValueError):
+            logger.debug("skipping non-serializable conversation event: %r", payload)
+            return
+        # A payload may not contain a bare newline (it would break SSE framing);
+        # json.dumps escapes them, so a single data line is always safe here.
+        self._broadcast(f"event: message\ndata: {data}\n\n")
+
+    def _broadcast(self, frame: str) -> None:
+        """Fan a pre-formatted SSE frame out to every subscriber (thread-safe)."""
         with self._lock:
             snapshot = list(self._subscribers)
         for loop, queue in snapshot:
             try:
-                loop.call_soon_threadsafe(self._enqueue_safely, queue, event)
+                loop.call_soon_threadsafe(self._enqueue_safely, queue, frame)
             except RuntimeError:
                 pass  # loop closed; subscriber will clean itself up on disconnect
 
@@ -143,7 +159,8 @@ async def _conversation_events_stream(
             except asyncio.TimeoutError:
                 yield ": keep-alive\n\n"
                 continue
-            yield f"event: activity\ndata: {event}\n\n"
+            # ``event`` is already a fully formatted SSE frame (activity or message).
+            yield event
     finally:
         unsubscribe()
 
@@ -208,10 +225,13 @@ class LocalStream:
         self._attach_event_bus_to_handler()
 
     def _attach_event_bus_to_handler(self) -> None:
-        """Wire the event bus as the handler's activity observer, if supported."""
+        """Wire the event bus as the handler's activity + event observer, if supported."""
         setter = getattr(self.handler, "set_activity_observer", None)
         if callable(setter):
             setter(self._event_bus.publish)
+        event_setter = getattr(self.handler, "set_event_observer", None)
+        if callable(event_setter):
+            event_setter(self._event_bus.publish_message)
 
     def seconds_since_activity(self) -> float:
         """Seconds since the live handler last saw conversation activity."""

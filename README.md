@@ -13,6 +13,8 @@ Three front-ends consume VoiceLive locally: `chat_client` (browser proxy),
 A fourth, `reachy_conversation`, runs the Reachy Mini robot conversation app
 against the orchestrator through VoiceLive (camera/image recognition removed).
 
+![workflows](./screenshot.png)
+
 ---
 
 ## Architecture

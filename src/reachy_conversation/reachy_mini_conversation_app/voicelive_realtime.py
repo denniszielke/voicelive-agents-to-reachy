@@ -110,6 +110,18 @@ def _resample_int16(samples: NDArray[np.int16], src_rate: int, dst_rate: int) ->
     return np.clip(np.round(resampled), -32768, 32767).astype(np.int16)
 
 
+def _classify_tool(name: Optional[str]) -> tuple[str, Optional[str]]:
+    """Classify a tool call for the web-UI flow diagram.
+
+    Returns ``(kind, target)`` where ``kind`` is ``"agent"`` for orchestrator
+    sub-agent calls (e.g. ``ask_weather_agent`` -> target ``"weather"``) or
+    ``"tool"`` for local robot tools (dance, move_head, ...).
+    """
+    if isinstance(name, str) and name.startswith("ask_") and name.endswith("_agent"):
+        return "agent", name[len("ask_") : -len("_agent")] or None
+    return "tool", None
+
+
 class VoiceLiveRealtimeHandler(ConversationHandler):
     """Realtime stream handler that bridges robot audio to Azure VoiceLive."""
 
@@ -436,6 +448,7 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
             delta = getattr(event, "delta", "") or ""
             if delta:
                 await self.output_queue.put(AdditionalOutputs({"role": "user_partial", "content": delta}))
+                self._emit_event({"type": "transcript_partial", "role": "user", "text": delta})
 
         elif event.type == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_COMPLETED:
             self._mark_activity("user_transcription_completed")
@@ -443,6 +456,7 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
             self.deps.movement_manager.set_listening(False)
             if transcript:
                 await self.output_queue.put(AdditionalOutputs({"role": "user", "content": transcript}))
+                self._emit_event({"type": "transcript", "role": "user", "text": transcript})
 
         elif event.type == ServerEventType.CONVERSATION_ITEM_INPUT_AUDIO_TRANSCRIPTION_FAILED:
             logger.debug("Input transcription failed (non-fatal)")
@@ -450,6 +464,7 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
         elif event.type == ServerEventType.RESPONSE_CREATED:
             self._mark_activity("response_created")
             self._response_done_event.clear()
+            self._emit_event({"type": "turn", "phase": "thinking"})
 
         elif event.type == ServerEventType.RESPONSE_AUDIO_DELTA:
             self._mark_activity("assistant_audio_delta")
@@ -460,9 +475,11 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
             transcript = getattr(event, "transcript", "") or ""
             if transcript:
                 await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": transcript}))
+                self._emit_event({"type": "transcript", "role": "assistant", "text": transcript})
 
         elif event.type == ServerEventType.RESPONSE_DONE:
             self._response_done_event.set()
+            self._emit_event({"type": "turn", "phase": "done"})
 
         elif event.type == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
             await self._handle_function_call(event)
@@ -473,6 +490,7 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
             self._response_done_event.set()
             logger.error("VoiceLive error: %s", message)
             await self.output_queue.put(AdditionalOutputs({"role": "assistant", "content": f"[error] {message}"}))
+            self._emit_event({"type": "error", "message": message})
 
     async def _queue_output_audio(self, delta: Optional[bytes | str]) -> None:
         if not delta:
@@ -560,6 +578,25 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
             logger.error("Invalid tool call: tool=%r args=%r", tool_name, args_json_str)
             return
 
+        # In hosted-agent mode the orchestrator runs its own tools (e.g. the
+        # ask_*_agent sub-agent calls) server-side over invocations_ws and only
+        # surfaces them here for observability. Reachy owns just its local robot
+        # tools, so anything it does not recognise must NOT be executed locally
+        # (it would fail with "unknown tool"). Surface it to the UI instead.
+        if tool_name not in core_tools.ALL_TOOLS:
+            kind, target = _classify_tool(tool_name)
+            self._emit_event(
+                {
+                    "type": "agent_call",
+                    "name": tool_name,
+                    "kind": kind,
+                    "target": target,
+                    "args": args_json_str,
+                }
+            )
+            logger.debug("Delegated tool %r to the hosted agent (not run locally)", tool_name)
+            return
+
         background_tool = await self.tool_manager.start_tool(
             call_id=call_id,
             tool_call_routine=ToolCallRoutine(
@@ -568,6 +605,18 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
                 deps=self.deps,
             ),
             is_idle_tool_call=False,
+        )
+        kind, target = _classify_tool(tool_name)
+        self._emit_event(
+            {
+                "type": "tool_call",
+                "id": call_id,
+                "name": tool_name,
+                "kind": kind,
+                "target": target,
+                "args": args_json_str,
+                "status": "started",
+            }
         )
         await self.output_queue.put(
             AdditionalOutputs(
@@ -589,6 +638,18 @@ class VoiceLiveRealtimeHandler(ConversationHandler):
         else:
             tool_result = {"error": "No result returned from tool execution"}
 
+        kind, target = _classify_tool(completed_tool.tool_name)
+        self._emit_event(
+            {
+                "type": "tool_result",
+                "id": completed_tool.id if isinstance(completed_tool.id, str) else None,
+                "name": completed_tool.tool_name,
+                "kind": kind,
+                "target": target,
+                "status": "error" if completed_tool.error is not None else "done",
+                "result": tool_result,
+            }
+        )
         await self.output_queue.put(
             AdditionalOutputs({"role": "assistant", "content": json.dumps(tool_result)}),
         )
