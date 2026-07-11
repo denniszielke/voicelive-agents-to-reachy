@@ -10,6 +10,7 @@ import { createOrb, mapActivityToState } from "../orb.js";
 import { consumePendingApply } from "../pending-apply.js";
 import { setPersonality } from "../personality-badge.js";
 import { h, prettifyProfileName } from "../ui.js";
+import { createFlowConsole } from "./flow-console.js";
 
 const SSE_ENDPOINT = `${API_PREFIX}/conversation_events`;
 
@@ -45,11 +46,13 @@ export async function mountTalkView({ outlet, signal }) {
   orb.root.addEventListener("click", onMicTap);
   syncMicAria();
 
+  const flowConsole = createFlowConsole();
+  flowConsole.centerSlot.append(h("div", { class: "talk__orb-wrap" }, orb.root), caption);
+
   const view = h(
     "section",
-    { class: "view view--talk" },
-    h("div", { class: "talk__orb-wrap" }, orb.root),
-    caption
+    { class: "view view--talk view--flow" },
+    flowConsole.root
   );
   outlet.replaceChildren(view);
 
@@ -98,10 +101,14 @@ export async function mountTalkView({ outlet, signal }) {
       syncMicAria();
     },
     onActivity: (reason) => {
+      flowConsole.handleActivity(reason);
       if (muted) return;
       const next = mapActivityToState(reason);
       if (next == null) return;
       orb.setState(next);
+    },
+    onMessage: (payload) => {
+      flowConsole.handleEvent(payload);
     },
     onError: () => {
       // SSE auto-retries (e.g. 404 before routes exist), so a failure here is transient.
@@ -113,6 +120,7 @@ export async function mountTalkView({ outlet, signal }) {
   signal.addEventListener("abort", () => {
     subscription.close();
     orb.dispose();
+    flowConsole.dispose();
     if (defaultAction) {
       defaultAction.hidden = true;
       defaultAction.removeEventListener("click", onSetDefault);
@@ -201,7 +209,7 @@ async function fetchPersonalityState() {
 
 const SSE_RECONNECT_MS = 2000;
 
-function subscribeConversationEvents({ onActivity, onReady, onError } = {}) {
+function subscribeConversationEvents({ onActivity, onReady, onError, onMessage } = {}) {
   if (typeof onActivity !== "function") {
     throw new TypeError("subscribeConversationEvents: onActivity is required");
   }
@@ -216,6 +224,15 @@ function subscribeConversationEvents({ onActivity, onReady, onError } = {}) {
     source.addEventListener("activity", (ev) => {
       const reason = (ev.data || "").trim();
       if (reason) onActivity(reason);
+    });
+
+    source.addEventListener("message", (ev) => {
+      if (typeof onMessage !== "function" || !ev.data) return;
+      try {
+        onMessage(JSON.parse(ev.data));
+      } catch {
+        // ignore malformed frames
+      }
     });
 
     source.addEventListener("ready", () => onReady());

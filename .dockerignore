@@ -1,0 +1,52 @@
+# Build context for `az acr build` is the repo root (see scripts/_helpers.py).
+# Everything here is stripped before the context is tarred and uploaded to ACR,
+# which is what was making builds slow. The biggest offenders were virtual
+# environments: .rvenv (~1.4 GB) at the root and a nested
+# src/orchestrator_agent/.venv (~150 MB) that `COPY ./src` was also baking into
+# the image. Patterns use `**/` so nested copies are matched at any depth.
+
+# Python virtual environments — large, host-specific, never needed in an image.
+**/.venv/
+**/.rvenv/
+**/venv/
+**/env/
+**/ENV/
+
+# Version control & CI metadata.
+.git/
+.gitignore
+.github/
+
+# azd / Azure local state.
+.azure/
+
+# Python caches & build artifacts.
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.eggs/
+**/build/
+**/dist/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.ipynb_checkpoints/
+
+# Node / JS deps (none are needed by the agent images).
+**/node_modules/
+
+# Local env files & secrets — agents read configuration from container env vars.
+.env
+*.env
+!*.env.example
+
+# Editor / OS cruft.
+.vscode/
+.idea/
+**/.DS_Store
+**/*.log
+
+# The Reachy Mini conversation front-end runs locally and is not part of any
+# hosted-agent image (weather / homeassistant / orchestrator COPY ./src but do
+# not import it), so keep its audio/static assets out of the build context.
+src/reachy_conversation/

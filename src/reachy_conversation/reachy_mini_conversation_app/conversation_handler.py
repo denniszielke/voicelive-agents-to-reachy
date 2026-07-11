@@ -3,7 +3,7 @@ import time
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import ClassVar, TypeAlias
+from typing import Any, ClassVar, TypeAlias
 from collections.abc import Callable
 
 import numpy as np
@@ -34,6 +34,7 @@ class ConversationHandler(AsyncStreamHandler, ABC):
     last_activity_time: float
     last_idle_behavior_time: float
     _activity_observer: Callable[[str], None] | None = None
+    _event_observer: Callable[[dict[str, Any]], None] | None = None
 
     def __init__(self) -> None:
         """Initialize the stream handler and shared idle/activity tracking."""
@@ -44,6 +45,24 @@ class ConversationHandler(AsyncStreamHandler, ABC):
     def set_activity_observer(self, observer: Callable[[str], None] | None) -> None:
         """Attach or detach an activity observer. Pass None to clear."""
         self._activity_observer = observer
+
+    def set_event_observer(self, observer: Callable[[dict[str, Any]], None] | None) -> None:
+        """Attach or detach a structured conversation-event observer.
+
+        The observer receives JSON-serializable dicts describing transcripts,
+        tool calls and agent invocations for the web UI inspector. Pass None to
+        clear.
+        """
+        self._event_observer = observer
+
+    def _emit_event(self, payload: dict[str, Any]) -> None:
+        """Forward a structured conversation event to the observer, if any."""
+        if self._event_observer is None:
+            return
+        try:
+            self._event_observer(payload)
+        except Exception:
+            logger.debug("event observer raised (ignored)", exc_info=True)
 
     def _mark_activity(self, reason: str) -> None:
         """Record non-idle conversation activity for the idle timer."""
