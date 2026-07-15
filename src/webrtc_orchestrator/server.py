@@ -97,6 +97,36 @@ _VOICE_LIVE_HOST = os.environ.get("AZURE_VOICELIVE_ENDPOINT", "").strip().rstrip
 # VoiceLive realtime model deployed by the infra (see AZURE_VOICELIVE_MODEL output)
 _VOICE_LIVE_MODEL = os.environ.get("AZURE_VOICELIVE_MODEL", "").strip() or "gpt-realtime"
 
+# Language for input speech-to-text. The `azure-speech` transcription model
+# streams interim (partial) results as `conversation.item.input_audio_transcription.delta`
+# events, which is what lets the browser render the user's words live as they speak.
+_TRANSCRIPTION_LANGUAGE = os.environ.get("REALTIME_TRANSCRIPTION_LANGUAGE", "").strip() or "en-US"
+
+
+def _build_transcription_session_update() -> dict[str, Any]:
+    """Session config that enables streaming (interim) input transcription.
+
+    The `azure-speech` transcription model emits partial `...transcription.delta`
+    events as the user speaks. It requires Azure Semantic VAD for turn detection.
+    In hosted-agent mode the agent owns its instructions, so we only set the
+    transcription + turn-detection fields here.
+    """
+    return {
+        "type": "session.update",
+        "session": {
+            "input_audio_transcription": {
+                "model": "azure-speech",
+                "language": _TRANSCRIPTION_LANGUAGE,
+            },
+            "turn_detection": {
+                "type": "azure_semantic_vad",
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 500,
+            },
+        },
+    }
+
 # Which agents the browser can connect to. AZURE_AI_AGENT_NAMES is a
 # comma-separated list; falls back to AZURE_AI_AGENT_NAME, then the
 # orchestrator-agent (which fans out to the specialists on its own).
@@ -252,6 +282,14 @@ async def signaling_ws(ws: WebSocket, agent: str = Query(default="")):
         return
 
     logger.info("[%s] Connected to Voice Live control channel", agent_name)
+
+    # Enable streaming (interim) input transcription so the browser can render
+    # the user's words live as they speak, via ...transcription.delta events.
+    try:
+        await service_ws.send(json.dumps(_build_transcription_session_update()))
+        logger.info("[%s] Streaming transcription enabled (azure-speech)", agent_name)
+    except Exception as exc:
+        logger.warning("[%s] Failed to enable streaming transcription: %s", agent_name, exc)
 
     # Relay messages bidirectionally
     async def _relay_service_to_browser():
