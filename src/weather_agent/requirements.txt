@@ -6,9 +6,9 @@ azure-ai-agentserver-invocations==1.0.0b6
 azure-ai-agentserver-core==2.0.0b7
 
 # LangChain / LangGraph
-langgraph==1.2.8
-langchain-core==1.4.9
-langchain-openai==1.3.4
+langgraph==1.2.9
+langchain-core==1.5.0
+langchain-openai==1.4.0
 
 # Azure / runtime
 azure-identity==1.25.3

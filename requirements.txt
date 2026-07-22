@@ -3,7 +3,7 @@
 # relevant subset of these. Only packages imported by the code are listed.
 
 # --- Web / runtime (webrtclive server, chat_client proxy) ------------------
-fastapi==0.139.0
+fastapi==0.139.2
 uvicorn==0.51.0
 # 15.x: langgraph-sdk requires websockets<16
 websockets==15.0.1
@@ -13,18 +13,18 @@ python-dotenv==1.2.2
 # --- weather-agent (LangGraph, Foundry hosted) -----------------------------
 azure-ai-agentserver-responses==1.0.0b8
 azure-ai-agentserver-core==2.0.0b7
-langgraph==1.2.8
-langchain-core==1.4.9
-langchain-openai==1.3.4
+langgraph==1.2.9
+langchain-core==1.5.0
+langchain-openai==1.4.0
 azure-monitor-opentelemetry==1.8.9
 
 # --- homeassistant-agent (Agent Framework, Foundry hosted) -----------------
-agent-framework-core==1.10.0
-agent-framework-foundry==1.10.0
-agent-framework-foundry-hosting==1.0.0a260630
+agent-framework-core==1.12.0
+agent-framework-foundry==1.10.2
+agent-framework-foundry-hosting==1.0.0b260721
 # Required by microsoft-opentelemetry's A365 OpenAI Agents instrumentor
 # (imported transitively via agent-framework-foundry-hosting).
-openai-agents==0.18.0
+openai-agents==0.18.3
 
 # --- VoiceLive client (voice-invocation) -----------------------------------
 azure-ai-voicelive==1.3.0b1
