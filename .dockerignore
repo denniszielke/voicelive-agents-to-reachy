@@ -3,14 +3,30 @@
 # which is what was making builds slow. The biggest offenders were virtual
 # environments: .rvenv (~1.4 GB) at the root and a nested
 # src/orchestrator_agent/.venv (~150 MB) that `COPY ./src` was also baking into
-# the image. Patterns use `**/` so nested copies are matched at any depth.
+# the image. ACR's context packer needs both a directory pattern and an explicit
+# descendant pattern; a trailing slash or only a `**/` prefix is insufficient.
 
 # Python virtual environments — large, host-specific, never needed in an image.
-**/.venv/
-**/.rvenv/
-**/venv/
-**/env/
-**/ENV/
+.venv
+.venv/**
+.rvenv
+.rvenv/**
+venv
+venv/**
+env
+env/**
+ENV
+ENV/**
+**/.venv
+**/.venv/**
+**/.rvenv
+**/.rvenv/**
+**/venv
+**/venv/**
+**/env
+**/env/**
+**/ENV
+**/ENV/**
 
 # Version control & CI metadata.
 .git/
@@ -21,19 +37,29 @@
 .azure/
 
 # Python caches & build artifacts.
-**/__pycache__/
-**/*.py[cod]
-**/*.egg-info/
-**/.eggs/
-**/build/
-**/dist/
-**/.pytest_cache/
-**/.mypy_cache/
-**/.ruff_cache/
-**/.ipynb_checkpoints/
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+**/*.egg-info
+.eggs
+**/.eggs
+build
+**/build
+dist
+**/dist
+.pytest_cache
+**/.pytest_cache
+.mypy_cache
+**/.mypy_cache
+.ruff_cache
+**/.ruff_cache
+.ipynb_checkpoints
+**/.ipynb_checkpoints
 
 # Node / JS deps (none are needed by the agent images).
-**/node_modules/
+node_modules
+**/node_modules
 
 # Local env files & secrets — agents read configuration from container env vars.
 .env
@@ -41,10 +67,13 @@
 !*.env.example
 
 # Editor / OS cruft.
-.vscode/
-.idea/
+.vscode
+.vscode/**
+.idea
+.idea/**
+.DS_Store
 **/.DS_Store
-**/*.log
+*.log
 
 # The Reachy Mini conversation front-end runs locally and is not part of any
 # hosted-agent image (weather / homeassistant / orchestrator COPY ./src but do
