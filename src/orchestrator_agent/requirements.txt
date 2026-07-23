@@ -2,9 +2,9 @@
 # Hosted via agent-framework-foundry-hosting (Responses protocol for VoiceLive),
 # and calls its sub-agents over the invocations_ws WebSocket protocol.
 
-agent-framework-core==1.12.0
-agent-framework-foundry==1.10.2
-agent-framework-foundry-hosting==1.0.0b260721
+agent-framework-core==1.12.1
+agent-framework-foundry==1.10.3
+agent-framework-foundry-hosting==1.0.0b260722
 
 azure-identity==1.25.3
 websockets==15.0.1
@@ -18,4 +18,4 @@ agent-framework-devui==1.0.0b260721
 # (imported transitively via agent-framework-foundry-hosting).
 openai-agents==0.18.3
 
-openai==2.46.0
+openai==2.47.0
