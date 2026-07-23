@@ -11,17 +11,17 @@ httpx==0.28.1
 python-dotenv==1.2.2
 
 # --- weather-agent (LangGraph, Foundry hosted) -----------------------------
-azure-ai-agentserver-responses==1.0.0b8
-azure-ai-agentserver-core==2.0.0b7
+azure-ai-agentserver-responses==1.0.0b9
+azure-ai-agentserver-core==2.0.0b8
 langgraph==1.2.9
 langchain-core==1.5.0
 langchain-openai==1.4.0
 azure-monitor-opentelemetry==1.8.9
 
 # --- homeassistant-agent (Agent Framework, Foundry hosted) -----------------
-agent-framework-core==1.12.0
-agent-framework-foundry==1.10.2
-agent-framework-foundry-hosting==1.0.0b260721
+agent-framework-core==1.12.1
+agent-framework-foundry==1.10.3
+agent-framework-foundry-hosting==1.0.0b260722
 # Required by microsoft-opentelemetry's A365 OpenAI Agents instrumentor
 # (imported transitively via agent-framework-foundry-hosting).
 openai-agents==0.18.3
