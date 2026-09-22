@@ -12,8 +12,8 @@ DESCRIPTION:
     Invocations-protocol agent). Speech I/O is **always** VoiceLive (Azure
     realtime over PyAudio); only the conversational backend varies:
 
-    1. ``hosted`` (default) — VoiceLive is bound to a Foundry hosted
-       invocations agent via ``AgentSessionConfig``. Foundry routes each
+     1. ``hosted`` (default) — VoiceLive is bound to a Foundry hosted
+         invocations agent by name and project. Foundry routes each
        turn to the agent's ``/invocations`` endpoint, streams the SSE
        response back through VoiceLive, and VoiceLive speaks the result.
 
@@ -66,10 +66,7 @@ load_dotenv()
 # Type-only imports so VoiceLive annotations resolve in IDEs without forcing
 # the SDK to be installed at import time for tooling.
 if TYPE_CHECKING:
-    from azure.ai.voicelive.aio import (  # type: ignore
-        AgentSessionConfig,
-        VoiceLiveConnection,
-    )
+    from azure.ai.voicelive.aio import VoiceLiveConnection  # type: ignore
     from azure.core.credentials_async import AsyncTokenCredential  # type: ignore
 
 # Azure VoiceLive SDK — required.
@@ -277,9 +274,9 @@ def _print_ui_event(evt: dict[str, Any]) -> None:
 class VoiceLiveClient:
     """VoiceLive client.
 
-    * If ``agent_config`` is provided, VoiceLive is bound to a Foundry hosted
-      invocations agent and the model's own response loop drives the
-      conversation.
+        * If ``agent_name`` and ``project_name`` are provided, VoiceLive is bound
+            to a Foundry hosted invocations agent and the model's own response loop
+            drives the conversation.
 
     * If ``invocation_url`` is provided instead, VoiceLive runs as a
       speech-only pipeline: ``turn_detection.create_response`` is set to
@@ -295,19 +292,23 @@ class VoiceLiveClient:
         self,
         endpoint: str,
         credential: "AsyncTokenCredential",
-        agent_config: Optional["AgentSessionConfig"] = None,
+        agent_name: Optional[str] = None,
+        project_name: Optional[str] = None,
         invocation_url: Optional[str] = None,
         invocation_session_id: Optional[str] = None,
         model: Optional[str] = None,
     ) -> None:
-        if (agent_config is None) == (invocation_url is None):
+        if (agent_name is None) == (invocation_url is None):
             raise ValueError(
-                "Provide exactly one of `agent_config` or `invocation_url`"
+                "Provide exactly one of `agent_name` or `invocation_url`"
             )
+        if agent_name is not None and not project_name:
+            raise ValueError("`project_name` is required with `agent_name`")
 
         self.endpoint = endpoint
         self.credential = credential
-        self.agent_config = agent_config
+        self.agent_name = agent_name
+        self.project_name = project_name
         self.invocation_url = invocation_url
         self.invocation_session_id = (
             invocation_session_id or f"local-{uuid.uuid4().hex[:8]}"
@@ -327,13 +328,14 @@ class VoiceLiveClient:
                 "endpoint": self.endpoint,
                 "credential": self.credential,
             }
-            if self.agent_config is not None:
+            if self.agent_name is not None:
                 logger.info(
                     "Connecting to VoiceLive with hosted agent %s in project %s",
-                    self.agent_config.get("agent_name"),
-                    self.agent_config.get("project_name"),
+                    self.agent_name,
+                    self.project_name,
                 )
-                connect_kwargs["agent_config"] = self.agent_config
+                connect_kwargs["agent_name"] = self.agent_name
+                connect_kwargs["project_name"] = self.project_name
                 if self.model:
                     connect_kwargs["model"] = self.model
             else:
@@ -373,10 +375,10 @@ class VoiceLiveClient:
     def _print_banner(self) -> None:
         print("\n" + "=" * 60)
         print("  TEMPERATURE AGENTS — VOICE CLIENT (VoiceLive)")
-        if self.agent_config is not None:
+        if self.agent_name is not None:
             print("  Mode    : hosted agent")
-            print(f"  Agent   : {self.agent_config.get('agent_name')}")
-            print(f"  Project : {self.agent_config.get('project_name')}")
+            print(f"  Agent   : {self.agent_name}")
+            print(f"  Project : {self.project_name}")
         else:
             print("  Mode    : custom invocation URL")
             print(f"  Backend : {self.invocation_url}")
@@ -389,7 +391,7 @@ class VoiceLiveClient:
         logger.info("Setting up voice conversation session...")
         voice_config = AzureStandardVoice(name="en-US-Ava:DragonHDLatestNeural")
 
-        if self.agent_config is not None:
+        if self.agent_name is not None:
             # Hosted-agent mode: VoiceLive's own response loop is in charge.
             turn_detection_config = ServerVad(
                 threshold=0.5,
@@ -626,14 +628,11 @@ async def run_client(args: argparse.Namespace) -> None:
             model=args.model or "gpt-realtime",
         )
     else:
-        agent_config: "AgentSessionConfig" = {
-            "agent_name": args.agent_name,
-            "project_name": args.project_name,
-        }
         client = VoiceLiveClient(
             endpoint=args.endpoint,
             credential=credential,
-            agent_config=agent_config,
+            agent_name=args.agent_name,
+            project_name=args.project_name,
             model=args.model or "gpt-realtime",
         )
 

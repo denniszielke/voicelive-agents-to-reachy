@@ -2,20 +2,18 @@
 # Hosted via agent-framework-foundry-hosting (Responses protocol for VoiceLive),
 # and calls its sub-agents over the invocations_ws WebSocket protocol.
 
-agent-framework-core==1.12.1
-agent-framework-foundry==1.10.3
-agent-framework-foundry-hosting==1.0.0b260722
+agent-framework-core==1.18.0
+agent-framework-foundry==1.13.0
+agent-framework-foundry-hosting==1.0.0b260910
 
 azure-identity==1.25.3
 websockets==15.0.1
-python-dotenv==1.2.2
+python-dotenv==1.2.3
 
 # Optional: observe the agent locally in the Agent Framework DevUI
 # (python -m src.orchestrator_agent.agent with DEVUI=1).
-agent-framework-devui==1.0.0b260721
+agent-framework-devui==1.0.0b260910
 
 # Required by microsoft-opentelemetry's A365 OpenAI Agents instrumentor
 # (imported transitively via agent-framework-foundry-hosting).
-openai-agents==0.18.3
-
-openai==2.47.0
+openai-agents==0.22.2

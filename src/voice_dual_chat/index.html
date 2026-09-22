@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Reachy — Temperature Agents</title>
+<title>Orchestrator Voice Chat</title>
 <style>
   :root { color-scheme: light dark; --accent: #2d7cd6; --green: #1a8a3a; --red: #b53030; --amber: #d6882d; }
   * { box-sizing: border-box; }
@@ -57,15 +57,15 @@
 </head>
 <body>
 
-<h1>🤖 Reachy — Temperature Agents</h1>
+<h1>Orchestrator Voice Chat</h1>
 <p class="subtitle">
-  Talks to <strong>weather-agent</strong> (outside) and
-  <strong>homeassistant-agent</strong> (inside) simultaneously via VoiceLive WebRTC.
+  VoiceLive WebRTC conversation with <strong>orchestrator-agent</strong>, which
+  routes indoor and outdoor temperature questions to the right specialist.
 </p>
 
 <div class="toolbar">
-  <button id="btnConnect" onclick="connectAll()">Connect all agents</button>
-  <button id="btnDisconnect" class="secondary" onclick="disconnectAll()" disabled>Disconnect all</button>
+  <button id="btnConnect" onclick="connectAll()">Connect</button>
+  <button id="btnDisconnect" class="secondary" onclick="disconnectAll()" disabled>Disconnect</button>
   <span class="mic-status" id="micStatus">microphone: not requested</span>
 </div>
 
@@ -127,7 +127,8 @@ class AgentSession {
     this._setPill('connecting…', 'connecting');
     this._addLog('Connecting…');
 
-    const wsUrl = `ws://${location.hostname || 'localhost'}:${location.port || 8090}/ws?agent=${encodeURIComponent(this.agentName)}`;
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${location.host}/ws?agent=${encodeURIComponent(this.agentName)}`;
     this.signalWs = new WebSocket(wsUrl);
     await new Promise((res, rej) => {
       this.signalWs.onopen = res;
@@ -144,7 +145,7 @@ class AgentSession {
     this.dataChannel.onclose = () => this._addLog('Data channel closed');
 
     // Add shared mic track
-    this.pc.addTrack(sharedTrack);
+    this.pc.addTrack(sharedTrack, sharedStream);
 
     // Remote audio playback
     this.audioEl = document.createElement('audio');
@@ -163,15 +164,15 @@ class AgentSession {
     });
     this._addLog('ICE gathering complete');
 
+    this.signalWs.onmessage = e => this._onSignal(JSON.parse(e.data));
+    this.signalWs.onclose = () => this._addLog('Signaling WS closed');
+    this.signalWs.onerror = () => { this._setPill('error', 'error'); };
+
     this.signalWs.send(JSON.stringify({
       type: 'rtc.call.sdp.create',
       sdp_offer: this.pc.localDescription.sdp,
     }));
     this._addLog('SDP offer sent');
-
-    this.signalWs.onmessage = e => this._onSignal(JSON.parse(e.data));
-    this.signalWs.onclose = () => this._addLog('Signaling WS closed');
-    this.signalWs.onerror = () => { this._setPill('error', 'error'); };
   }
 
   // ----- signaling messages (control channel) -------------------------------
@@ -281,7 +282,7 @@ async function _loadAgents() {
     const res = await fetch('/config');
     agents = (await res.json()).agents || [];
   } catch(_) {
-    agents = ['weather-agent', 'homeassistant-agent'];
+    agents = ['orchestrator-agent'];
   }
   const grid = document.getElementById('agentsGrid');
   grid.innerHTML = '';

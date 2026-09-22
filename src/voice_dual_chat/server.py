@@ -14,16 +14,16 @@ Audio flows directly between the browser and Voice Live API over WebRTC
 (peer-to-peer RTP). Non-audio events travel over the WebRTC data channel.
 
 Agent Invocation:
-  Uses AgentSessionConfig pattern to connect with a Foundry Agent.
-  The agent encapsulates model, instructions, and voice config —
-  no model deployment name is needed on the client side.
+    Binds VoiceLive to a Foundry hosted agent with explicit agent and project
+    names. By default that agent is orchestrator-agent, which routes each turn
+    to the weather and home-assistant specialists.
 """
 
 import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 import logging
@@ -49,11 +49,9 @@ load_dotenv(_WORKSPACE_ROOT / ".env", override=True)
 
 _FOUNDRY_ENDPOINT = os.environ.get("AZURE_AI_PROJECT_ENDPOINT", "").strip().rstrip("/")
 
-# Bind to a Foundry hosted agent by default. Set AZURE_AI_AGENT_NAME in ./.env
-# to choose which agent VoiceLive routes turns to:
-#   weather-agent        — outside (outdoor) temperature
-#   homeassistant-agent  — inside (indoor) temperature
-_DEFAULT_AGENT_NAME = "weather-agent"
+# Bind VoiceLive to the orchestrator, which routes each turn to the weather
+# and home-assistant specialists.
+_DEFAULT_AGENT_NAME = "orchestrator-agent"
 _AGENT_NAME = (
     os.environ.get("AZURE_AI_AGENT_NAME", "").strip()
     or os.environ.get("AZURE_AI_WORKFLOW_AGENT_NAME", "").strip()
@@ -74,14 +72,34 @@ _VOICE_LIVE_HOST = os.environ.get("AZURE_VOICELIVE_ENDPOINT", "").strip().rstrip
 # VoiceLive realtime model deployed by the infra (see AZURE_VOICELIVE_MODEL output)
 _VOICE_LIVE_MODEL = os.environ.get("AZURE_VOICELIVE_MODEL", "").strip() or "gpt-realtime"
 
-# Both agents made available for simultaneous sessions.
-# AZURE_AI_AGENT_NAMES is a comma-separated list; falls back to AZURE_AI_AGENT_NAME.
-_raw_names = os.environ.get("AZURE_AI_AGENT_NAMES", "").strip()
-CONFIGURED_AGENTS: list[str] = (
-    [n.strip() for n in _raw_names.split(",") if n.strip()]
-    if _raw_names
-    else ([_AGENT_NAME] if _AGENT_NAME else ["weather-agent", "homeassistant-agent"])
+_TRANSCRIPTION_LANGUAGE = (
+    os.environ.get("REALTIME_TRANSCRIPTION_LANGUAGE", "").strip() or "en-US"
 )
+
+
+def _build_session_update() -> dict[str, Any]:
+    """Enable browser transcripts and automatic spoken responses per turn."""
+    return {
+        "type": "session.update",
+        "session": {
+            "modalities": ["text", "audio"],
+            "input_audio_transcription": {
+                "model": "azure-speech",
+                "language": _TRANSCRIPTION_LANGUAGE,
+            },
+            "turn_detection": {
+                "type": "azure_semantic_vad",
+                "threshold": 0.5,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 500,
+                "create_response": True,
+            },
+        },
+    }
+
+# This app intentionally opens one VoiceLive session. The orchestrator handles
+# fan-out to both specialists within that conversation.
+CONFIGURED_AGENTS: list[str] = [_AGENT_NAME]
 
 # Startup diagnostics
 logger.info(
@@ -92,6 +110,14 @@ logger.info(
 
 def _build_voicelive_ws_url(agent_name: str) -> str:
     """Build the Voice Live WebSocket URL for a specific agent."""
+    if not agent_name:
+        raise RuntimeError("Set AZURE_AI_AGENT_NAME to a deployed hosted agent")
+    if not _PROJECT_NAME:
+        raise RuntimeError(
+            "Set AZURE_AI_PROJECT_NAME or AZURE_AI_PROJECT_ENDPOINT so VoiceLive "
+            "can locate the hosted agent"
+        )
+
     if _VOICE_LIVE_HOST:
         host = _VOICE_LIVE_HOST.replace("https://", "").replace("http://", "").split("/")[0]
     elif _FOUNDRY_ENDPOINT:
@@ -262,6 +288,13 @@ async def signaling_ws(ws: WebSocket, agent: str = Query(default="")):
                 msg = json.loads(data)
                 msg_type = msg.get("type", "")
                 logger.debug("[%s] Browser -> Service: %s", agent_name, msg_type)
+                if msg_type == "rtc.call.sdp.create":
+                    msg["session"] = _build_session_update()["session"]
+                    logger.info(
+                        "[%s] Creating voice session (language=%s)",
+                        agent_name,
+                        _TRANSCRIPTION_LANGUAGE,
+                    )
                 await service_ws.send(json.dumps(msg))
         except WebSocketDisconnect:
             logger.info("[%s] Browser signaling WebSocket disconnected", agent_name)

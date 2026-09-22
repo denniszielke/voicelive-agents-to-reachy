@@ -9,7 +9,7 @@ both specialist agents:
 - **homeassistant-agent** — inside (indoor) temperature (Agent Framework)
 
 Three front-ends consume VoiceLive locally: `chat_client` (browser proxy),
-`webrtclive` (browser + WebRTC), and `voice-invocation` (terminal mic/speaker).
+`voice_dual_chat` (browser + WebRTC), and `voice-invocation` (terminal mic/speaker).
 A fourth, `reachy_conversation`, runs the Reachy Mini robot conversation app
 against the orchestrator through VoiceLive (camera/image recognition removed).
 
@@ -23,7 +23,7 @@ against the orchestrator through VoiceLive (camera/image recognition removed).
 graph LR
   subgraph Local front-ends
     CC[chat_client]
-    WR[webrtclive]
+    WR[voice_dual_chat]
     VI[voice-invocation]
   end
 
@@ -182,16 +182,77 @@ Uses `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_AI_AGENT_NAME`. Override per run:
 python src/chat_client/proxy.py --agent homeassistant-agent
 ```
 
-### 4b. webrtclive — browser + WebRTC
+### 4b. voice_dual_chat — browser + WebRTC
 
-```bash
-python src/webrtclive/server.py
-# then open http://localhost:8090/   (health check: http://localhost:8090/health)
+`voice_dual_chat` opens one browser voice session with the hosted
+`orchestrator-agent`. The orchestrator routes each turn to `weather-agent`,
+`homeassistant-agent`, or both, then VoiceLive speaks the combined response.
+
+```text
+Browser microphone <-> VoiceLive <-> orchestrator-agent <-> specialist agents
+       WebRTC          hosted agent       invocations_ws
 ```
 
-Uses `AZURE_AI_PROJECT_ENDPOINT`, `AZURE_AI_PROJECT_NAME`, `AZURE_AI_AGENT_NAME`,
-`AZURE_VOICELIVE_ENDPOINT`, `AZURE_VOICELIVE_MODEL`. Change the port with
-`WEBRTCLIVE_PORT`.
+The local FastAPI server authenticates with `DefaultAzureCredential` and relays
+the WebRTC SDP exchange over WebSockets. Microphone and synthesized audio flow
+directly between the browser and VoiceLive; Azure credentials are never sent to
+the browser.
+
+Before starting, deploy all three agents, run `az login`, install the root
+requirements, and ensure `./.env` contains the outputs copied by `azd up`.
+
+| Variable | Purpose |
+|----------|---------|
+| `AZURE_VOICELIVE_ENDPOINT` | VoiceLive resource endpoint; falls back to the project endpoint. |
+| `AZURE_AI_PROJECT_ENDPOINT` | Foundry project endpoint and project-name fallback. |
+| `AZURE_AI_PROJECT_NAME` | Foundry project containing the hosted orchestrator. |
+| `AZURE_AI_AGENT_NAME` | Hosted agent name; defaults to `orchestrator-agent`. |
+| `AZURE_VOICELIVE_MODEL` | Realtime model deployment; defaults to `gpt-realtime`. |
+| `REALTIME_TRANSCRIPTION_LANGUAGE` | Input transcription locale; defaults to `en-US`. |
+| `WEBRTCLIVE_PORT` | Local server port; defaults to `8090`. |
+
+The app intentionally ignores `AZURE_AI_AGENT_NAMES`: it creates one voice
+session and lets the orchestrator fan out to both specialists.
+
+```bash
+python src/voice_dual_chat/server.py
+```
+
+If port `8090` is already in use, stop the existing server with `Ctrl+C` in its
+terminal or start this instance on another port:
+
+```bash
+WEBRTCLIVE_PORT=8091 python src/voice_dual_chat/server.py
+```
+
+Then open <http://localhost:8091> instead.
+
+Open <http://localhost:8090>, select **Connect**, and allow microphone access.
+The status changes to **connected** after VoiceLive completes the WebRTC
+handshake. Try:
+
+- "What is the temperature outside?"
+- "How warm is it inside?"
+- "Compare the indoor and outdoor temperatures."
+
+The health endpoint at <http://localhost:8090/health> should report
+`orchestrator-agent` and the expected Foundry project.
+
+Troubleshooting:
+
+- **HTTP 401/403** — run `az login` and verify access to both the VoiceLive
+  resource and Foundry project.
+- **Hosted agent not found** — verify `AZURE_AI_PROJECT_NAME` and confirm that
+  `orchestrator-agent` deployed successfully.
+- **No microphone** — use `http://localhost` or HTTPS and grant browser
+  microphone permission.
+- **Address already in use** — stop the process already listening on port
+  `8090`, or set `WEBRTCLIVE_PORT` to an unused port as shown above.
+- **Connected but no reply** — inspect the browser event log and server output,
+  then verify both specialists are deployed with the `invocations_ws` protocol.
+
+See the [component guide](src/voice_dual_chat/README.md) for the same workflow
+close to the implementation.
 
 ### 4c. voice-invocation — terminal mic/speaker
 
